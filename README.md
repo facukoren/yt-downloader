@@ -21,6 +21,7 @@ Después: doble-click en `Descargar Videos` del escritorio → pegar URL → Des
 - Botón Reproducir abre archivo al terminar
 - Notificaciones de sistema cuando completa
 - Auto-actualiza yt-dlp 1x/semana (silencioso, background)
+- Auto-descarga runtime JS (`deno.exe`) al primer arranque si falta — requerido por yt-dlp para extraccion completa de YouTube
 - Mensajes de error en español plano (video privado, sin internet, etc.)
 
 ## Para desarrolladores
@@ -48,6 +49,9 @@ BuildPortableZip.bat  Wrapper del .ps1
 - `yt-dlp.exe` — https://github.com/yt-dlp/yt-dlp/releases
 - `ffmpeg.exe` + `ffprobe.exe` — https://www.gyan.dev/ffmpeg/builds/ (release essentials)
 
+**Binario opcional** (si falta, la app lo descarga sola al primer arranque):
+- `deno.exe` — https://github.com/denoland/deno/releases (runtime JS requerido por yt-dlp para extracción completa de YouTube)
+
 **Compilar:**
 ```bat
 BuildInstaller.bat       # genera "Instalar YT Downloader.exe"
@@ -65,6 +69,8 @@ BuildPortableZip.bat     # genera "YT Downloader Portable.zip"
 **Cancelación:** `taskkill /T /F /PID` mata yt-dlp + ffmpeg hijo.
 
 **Captura filepath final:** `--print after_move:filepath` de yt-dlp, regex `^[A-Za-z]:[\\/].+\.[A-Za-z0-9]+$` en timer tick, `Test-Path` para validar.
+
+**JS runtime (deno):** yt-dlp requiere un runtime JavaScript para extraer todos los formatos de YouTube (subsistema EJS). Al arrancar, la app busca `deno.exe` junto al script y en `PATH`; si no lo encuentra, lo descarga en background (`https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip`) via `WebClient`+`ZipArchive` desde un Thread .NET (mismo patrón que el auto-update de yt-dlp). Cuando está disponible, se pasa `--js-runtimes deno:<path>` a yt-dlp.
 
 ## Licencia
 

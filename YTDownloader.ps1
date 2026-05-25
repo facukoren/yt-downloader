@@ -90,13 +90,98 @@ if (-not ('YTD.ProcOutput' -as [type])) {
     }
 }
 
+# Optional helper for downloading deno.exe (JS runtime required by yt-dlp for
+# full YouTube extraction). Kept as a separate Add-Type so existing YTD.cache.dll
+# installs keep working without recompilation.
+if (-not ('YTD.DenoInstaller' -as [type])) {
+    $denoCsTypeDef = @'
+using System;
+using System.IO;
+using System.IO.Compression;
+using System.Net;
+using System.Threading;
+using System.Collections.Concurrent;
+
+namespace YTD {
+    public static class DenoInstaller {
+        public const string OutputPrefix = "__YTD_DENO_OUT__";
+        public const string DonePrefix   = "__YTD_DENO_DONE__";
+        public static void Install(string scriptDir, ConcurrentQueue<string> queue) {
+            Thread t = new Thread(delegate() {
+                int code = 0;
+                string tmpZip = Path.Combine(scriptDir, "deno-download.zip.tmp");
+                string finalPath = Path.Combine(scriptDir, "deno.exe");
+                try {
+                    string url = "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip";
+                    queue.Enqueue(OutputPrefix + "::Descargando runtime JavaScript (deno) para extraccion completa de YouTube...");
+                    try {
+                        ServicePointManager.SecurityProtocol = ServicePointManager.SecurityProtocol | (SecurityProtocolType)3072;
+                    } catch { }
+                    using (WebClient wc = new WebClient()) {
+                        wc.Headers.Add("User-Agent", "YTDownloader/1.0");
+                        wc.DownloadFile(url, tmpZip);
+                    }
+                    queue.Enqueue(OutputPrefix + "::Extrayendo deno.exe...");
+                    bool extracted = false;
+                    using (ZipArchive archive = ZipFile.OpenRead(tmpZip)) {
+                        foreach (ZipArchiveEntry entry in archive.Entries) {
+                            if (string.Equals(entry.Name, "deno.exe", StringComparison.OrdinalIgnoreCase)) {
+                                entry.ExtractToFile(finalPath, true);
+                                extracted = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (extracted && File.Exists(finalPath)) {
+                        queue.Enqueue(OutputPrefix + "::deno.exe instalado. Las proximas descargas usaran extraccion completa.");
+                    } else {
+                        code = 1;
+                        queue.Enqueue(OutputPrefix + "::deno.exe no encontrado dentro del ZIP descargado.");
+                    }
+                } catch (Exception ex) {
+                    code = 2;
+                    queue.Enqueue(OutputPrefix + "::No se pudo instalar deno automaticamente: " + ex.Message);
+                } finally {
+                    try { if (File.Exists(tmpZip)) File.Delete(tmpZip); } catch { }
+                    queue.Enqueue(DonePrefix + "::" + code);
+                }
+            });
+            t.IsBackground = true;
+            t.Start();
+        }
+    }
+}
+'@
+    try {
+        # Ensure the System.IO.Compression assemblies are loaded so we can
+        # reference them by absolute path (most reliable form for -ReferencedAssemblies
+        # on PS 5.1, where short names can fail to resolve).
+        Add-Type -AssemblyName System.IO.Compression -ErrorAction SilentlyContinue
+        Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+        $denoRefs = @(
+            [System.IO.Compression.ZipArchive].Assembly.Location,
+            [System.IO.Compression.ZipFile].Assembly.Location
+        )
+        Add-Type -TypeDefinition $denoCsTypeDef -ReferencedAssemblies $denoRefs -ErrorAction Stop
+    } catch {
+        # Non-fatal: auto-install simply will not be available; manual deno.exe still works.
+    }
+}
+
 # -----------------------------------------------------------------------------
 # Paths
 # -----------------------------------------------------------------------------
 $scriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ytdlpPath  = Join-Path $scriptDir 'yt-dlp.exe'
 $ffmpegPath = Join-Path $scriptDir 'ffmpeg.exe'
+$denoPath   = Join-Path $scriptDir 'deno.exe'
 $configPath = Join-Path $scriptDir 'config.json'
+
+# Clean up any stale partial download from a previous interrupted session.
+$denoTmpZip = Join-Path $scriptDir 'deno-download.zip.tmp'
+if (Test-Path -LiteralPath $denoTmpZip) {
+    try { Remove-Item -LiteralPath $denoTmpZip -Force -ErrorAction SilentlyContinue } catch {}
+}
 
 # Sanity check: yt-dlp must exist
 if (-not (Test-Path $ytdlpPath)) {
@@ -132,11 +217,19 @@ $script:proc           = $null
 $script:procSink       = $null
 $script:dataDelegate   = $null
 $script:exitDelegate   = $null
-$script:isRunning      = $false
-$script:isUpdating     = $false
-$script:exitSentinel   = [YTD.ProcOutput]::ExitSentinel
+$script:isRunning        = $false
+$script:isUpdating       = $false
+$script:isInstallingDeno = $false
+$script:exitSentinel     = [YTD.ProcOutput]::ExitSentinel
 $script:updateOutPrefix  = [YTD.Updater]::OutputPrefix
 $script:updateDonePrefix = [YTD.Updater]::DonePrefix
+if ('YTD.DenoInstaller' -as [type]) {
+    $script:denoOutPrefix  = [YTD.DenoInstaller]::OutputPrefix
+    $script:denoDonePrefix = [YTD.DenoInstaller]::DonePrefix
+} else {
+    $script:denoOutPrefix  = '__YTD_DENO_OUT__'
+    $script:denoDonePrefix = '__YTD_DENO_DONE__'
+}
 $script:notifyIcon       = $null
 $script:appIcon          = $null
 $script:lastDestForOpen    = $null  # captured at download start for balloon click
@@ -182,6 +275,18 @@ function ConvertTo-CmdArg {
     }
     [void]$sb.Append('"')
     return $sb.ToString()
+}
+
+# Locate a JS runtime for yt-dlp (deno is the default expected by yt-dlp's EJS
+# subsystem). Prefer a local deno.exe next to the script (portable installs),
+# then anything on PATH. Returns the full path or $null if none is available.
+function Resolve-DenoPath {
+    if (Test-Path -LiteralPath $denoPath) { return $denoPath }
+    try {
+        $cmd = Get-Command 'deno' -CommandType Application -ErrorAction SilentlyContinue
+        if ($null -ne $cmd) { return $cmd.Source }
+    } catch {}
+    return $null
 }
 
 function Test-IsValidUrl {
@@ -469,6 +574,22 @@ function Start-UpdateCheck {
     }
 }
 
+# yt-dlp requires a JS runtime (default: deno) for full YouTube extraction.
+# If deno.exe is missing from the install dir AND not on PATH, fetch it once
+# in the background. Safe to call on every launch — exits early if not needed.
+function Start-DenoInstall {
+    if ($script:isInstallingDeno) { return }
+    if ($null -ne (Resolve-DenoPath)) { return }
+    if (-not ('YTD.DenoInstaller' -as [type])) { return }
+    $script:isInstallingDeno = $true
+    try {
+        [YTD.DenoInstaller]::Install($scriptDir, $script:logQueue)
+    } catch {
+        Write-Log "[JS runtime] No se pudo iniciar la descarga de deno: $($_.Exception.Message)"
+        $script:isInstallingDeno = $false
+    }
+}
+
 # -----------------------------------------------------------------------------
 # Download orchestration
 # -----------------------------------------------------------------------------
@@ -583,6 +704,14 @@ function Start-Download {
         }
     }
 
+    # Point yt-dlp at the JS runtime if we have one (default is deno on PATH).
+    # Passing an explicit path avoids the "No supported JavaScript runtime" warning
+    # and unlocks the full set of YouTube formats.
+    $resolvedDeno = Resolve-DenoPath
+    if ($null -ne $resolvedDeno) {
+        $argList.Add('--js-runtimes'); $argList.Add("deno:$resolvedDeno")
+    }
+
     $argList.Add('--')                 # end of options; URL follows
     $argList.Add($url)
 
@@ -691,6 +820,20 @@ $timer.Add_Tick({
             $tmpCode = -1
             [void][int]::TryParse($tail, [ref]$tmpCode)
             $updateExitCode = $tmpCode
+            continue
+        }
+
+        # Deno install output: "__YTD_DENO_OUT__::..."
+        if ($line.StartsWith($script:denoOutPrefix)) {
+            $msg = $line.Substring($script:denoOutPrefix.Length + 2)
+            foreach ($l in ($msg -split "`r?`n")) {
+                if (-not [string]::IsNullOrWhiteSpace($l)) { Write-Log "[JS runtime] $l" }
+            }
+            continue
+        }
+        # Deno install done: "__YTD_DENO_DONE__::<exitCode>"
+        if ($line.StartsWith($script:denoDonePrefix)) {
+            $script:isInstallingDeno = $false
             continue
         }
 
@@ -897,6 +1040,7 @@ $form.Add_Shown({
     }
     $txtUrl.Focus()
     Start-UpdateCheck
+    Start-DenoInstall
 })
 
 # Clean shutdown
