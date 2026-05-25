@@ -1,0 +1,35 @@
+# Binaries (too big for git — ship as GitHub Release assets)
+yt-dlp.exe
+ffmpeg.exe
+ffprobe.exe
+ffplay.exe
+
+# Build outputs
+Instalar YT Downloader.exe
+YT Downloader Portable.zip
+YTD.cache.dll
+
+# Generated assets (Setup.ps1 regenerates from code)
+app.ico
+
+# User runtime state
+config.json
+
+# Editor / OS junk
+*.swp
+*.bak
+Thumbs.db
+.DS_Store
+.vs/
+.vscode/
+.claude/
+
+# Downloaded test videos (any media files in repo root)
+*.webm
+*.mp4
+*.mkv
+*.mp3
+*.m4a
+*.opus
+*.wav
+*.aac
