@@ -26,6 +26,11 @@ foreach ($f in $requiredFiles) {
 $dll = Join-Path $d 'YTD.cache.dll'
 if (Test-Path $dll) { $files += $dll }
 
+# Incluir runtime JS si esta presente (opcional, evita el warning de yt-dlp).
+# Si falta, la app lo descarga sola al primer arranque.
+$deno = Join-Path $d 'deno.exe'
+if (Test-Path $deno) { $files += $deno }
+
 if ($missing.Count -gt 0) {
     Write-Host "[ERROR] Faltan archivos:" -ForegroundColor Red
     $missing | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
