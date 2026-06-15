@@ -48,7 +48,6 @@ BuildPortableZip.bat  Wrapper del .ps1
 **Binarios necesarios** (poner en raíz del proyecto):
 - `yt-dlp.exe` — https://github.com/yt-dlp/yt-dlp/releases
 - `ffmpeg.exe` + `ffprobe.exe` — https://www.gyan.dev/ffmpeg/builds/ (release essentials)
-- `deno.exe` — https://github.com/denoland/deno/releases (runtime JS; YouTube lo requiere para extraer formatos)
 
 **Binario opcional** (si falta, la app lo descarga sola al primer arranque):
 - `deno.exe` — https://github.com/denoland/deno/releases (runtime JS requerido por yt-dlp para extracción completa de YouTube)
@@ -69,9 +68,7 @@ BuildPortableZip.bat     # genera "YT Downloader Portable.zip"
 
 **Cancelación:** `taskkill /T /F /PID` mata yt-dlp + ffmpeg hijo.
 
-**JS runtime:** YouTube requiere ejecutar JS para extraer formatos. Se bundlea `deno.exe`; el scriptDir se inyecta al PATH del subproceso (`ProcessStartInfo.EnvironmentVariables`) para que yt-dlp lo auto-detecte. Sin esto, faltan formatos H.264/AAC y el output cae a MKV.
-
-**Salida MP4:** los selectores de formato prefieren audio `m4a` (`bestvideo*+bestaudio[ext=m4a]/...`) para que el merge produzca MP4 limpio. El audio `opus` fuerza fallback a MKV (ffmpeg lo marca experimental en contenedor MP4).
+**Salida MP4:** los selectores de formato prefieren audio `m4a` (`bestvideo*+bestaudio[ext=m4a]/...`) para que el merge produzca MP4 limpio. El audio `opus` fuerza fallback a MKV (ffmpeg lo marca experimental en contenedor MP4). Sin JS runtime faltan los formatos H.264/AAC y el output siempre caería a MKV.
 
 **Captura filepath final:** `--print after_move:filepath` de yt-dlp, regex `^[A-Za-z]:[\\/].+\.[A-Za-z0-9]+$` en timer tick, `Test-Path` para validar.
 

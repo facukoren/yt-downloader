@@ -56,7 +56,6 @@ english.MyLaunch=Launch YT Downloader now
 Source: "yt-dlp.exe";        DestDir: "{app}"; Flags: ignoreversion
 Source: "ffmpeg.exe";        DestDir: "{app}"; Flags: ignoreversion
 Source: "ffprobe.exe";       DestDir: "{app}"; Flags: ignoreversion
-Source: "deno.exe";          DestDir: "{app}"; Flags: ignoreversion
 Source: "YTDownloader.ps1";  DestDir: "{app}"; Flags: ignoreversion
 Source: "Launch.bat";        DestDir: "{app}"; Flags: ignoreversion
 Source: "Setup.ps1";         DestDir: "{app}"; Flags: ignoreversion
