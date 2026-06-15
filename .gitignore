@@ -3,6 +3,7 @@ yt-dlp.exe
 ffmpeg.exe
 ffprobe.exe
 ffplay.exe
+deno.exe
 
 # Build outputs
 Instalar YT Downloader.exe

@@ -7,6 +7,7 @@ $requiredFiles = @(
     'yt-dlp.exe',
     'ffmpeg.exe',
     'ffprobe.exe',
+    'deno.exe',
     'YTDownloader.ps1',
     'Launch.bat',
     'Setup.ps1',

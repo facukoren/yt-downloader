@@ -198,15 +198,18 @@ $ffmpegAvailable = Test-Path $ffmpegPath
 # -----------------------------------------------------------------------------
 # Resolution presets
 # -----------------------------------------------------------------------------
+# Format selectors prefer m4a audio so the merge produces a clean MP4
+# (opus audio forces ffmpeg into an MKV fallback). Falls back to any audio
+# if m4a is unavailable for a given video.
 $resolutions = @(
-    [PSCustomObject]@{ Label = 'Mejor calidad disponible'; Format = 'bestvideo*+bestaudio/best';                                    AudioOnly = $false }
-    [PSCustomObject]@{ Label = '4K (2160p)';               Format = 'bestvideo[height<=2160]+bestaudio/best[height<=2160]/best';   AudioOnly = $false }
-    [PSCustomObject]@{ Label = '1440p';                    Format = 'bestvideo[height<=1440]+bestaudio/best[height<=1440]/best';   AudioOnly = $false }
-    [PSCustomObject]@{ Label = '1080p (Full HD)';          Format = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best';   AudioOnly = $false }
-    [PSCustomObject]@{ Label = '720p (HD)';                Format = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best';     AudioOnly = $false }
-    [PSCustomObject]@{ Label = '480p';                     Format = 'bestvideo[height<=480]+bestaudio/best[height<=480]/best';     AudioOnly = $false }
-    [PSCustomObject]@{ Label = '360p';                     Format = 'bestvideo[height<=360]+bestaudio/best[height<=360]/best';     AudioOnly = $false }
-    [PSCustomObject]@{ Label = 'Solo audio (MP3)';         Format = $null;                                                          AudioOnly = $true  }
+    [PSCustomObject]@{ Label = 'Mejor calidad disponible'; Format = 'bestvideo*+bestaudio[ext=m4a]/bestvideo*+bestaudio/best';                                                     AudioOnly = $false }
+    [PSCustomObject]@{ Label = '4K (2160p)';               Format = 'bestvideo[height<=2160]+bestaudio[ext=m4a]/bestvideo[height<=2160]+bestaudio/best[height<=2160]/best';        AudioOnly = $false }
+    [PSCustomObject]@{ Label = '1440p';                    Format = 'bestvideo[height<=1440]+bestaudio[ext=m4a]/bestvideo[height<=1440]+bestaudio/best[height<=1440]/best';        AudioOnly = $false }
+    [PSCustomObject]@{ Label = '1080p (Full HD)';          Format = 'bestvideo[height<=1080]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best';        AudioOnly = $false }
+    [PSCustomObject]@{ Label = '720p (HD)';                Format = 'bestvideo[height<=720]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/best';           AudioOnly = $false }
+    [PSCustomObject]@{ Label = '480p';                     Format = 'bestvideo[height<=480]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480]/best';           AudioOnly = $false }
+    [PSCustomObject]@{ Label = '360p';                     Format = 'bestvideo[height<=360]+bestaudio[ext=m4a]/bestvideo[height<=360]+bestaudio/best[height<=360]/best';           AudioOnly = $false }
+    [PSCustomObject]@{ Label = 'Solo audio (MP3)';         Format = $null;                                                                                                          AudioOnly = $true  }
 )
 
 # -----------------------------------------------------------------------------
@@ -700,6 +703,8 @@ function Start-Download {
     } else {
         $argList.Add('-f'); $argList.Add($res.Format)
         if ($ffmpegAvailable) {
+            # m4a audio preference (above) keeps this on mp4; mkv is a last resort
+            # for the rare video lacking an m4a track (opus can't go in mp4).
             $argList.Add('--merge-output-format'); $argList.Add('mp4/mkv')
         }
     }
