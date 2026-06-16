@@ -198,18 +198,22 @@ $ffmpegAvailable = Test-Path $ffmpegPath
 # -----------------------------------------------------------------------------
 # Resolution presets
 # -----------------------------------------------------------------------------
-# Format selectors prefer m4a audio so the merge produces a clean MP4
-# (opus audio forces ffmpeg into an MKV fallback). Falls back to any audio
-# if m4a is unavailable for a given video.
+# Format selectors force H.264 (avc1) video + AAC (m4a) audio for maximum
+# compatibility — output is always MP4 / H.264 / AAC, playable on any device
+# or player (old TVs, editors, phones). Fallbacks keep the download working
+# if avc1 is unavailable for a given video.
+# NOTE: YouTube only serves H.264 up to 1080p; the 4K/1440p presets still cap
+# at the best available H.264 (effectively 1080p) because higher resolutions
+# exist only in AV1/VP9.
 $resolutions = @(
-    [PSCustomObject]@{ Label = 'Mejor calidad disponible'; Format = 'bestvideo*+bestaudio[ext=m4a]/bestvideo*+bestaudio/best';                                                     AudioOnly = $false }
-    [PSCustomObject]@{ Label = '4K (2160p)';               Format = 'bestvideo[height<=2160]+bestaudio[ext=m4a]/bestvideo[height<=2160]+bestaudio/best[height<=2160]/best';        AudioOnly = $false }
-    [PSCustomObject]@{ Label = '1440p';                    Format = 'bestvideo[height<=1440]+bestaudio[ext=m4a]/bestvideo[height<=1440]+bestaudio/best[height<=1440]/best';        AudioOnly = $false }
-    [PSCustomObject]@{ Label = '1080p (Full HD)';          Format = 'bestvideo[height<=1080]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best';        AudioOnly = $false }
-    [PSCustomObject]@{ Label = '720p (HD)';                Format = 'bestvideo[height<=720]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/best';           AudioOnly = $false }
-    [PSCustomObject]@{ Label = '480p';                     Format = 'bestvideo[height<=480]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480]/best';           AudioOnly = $false }
-    [PSCustomObject]@{ Label = '360p';                     Format = 'bestvideo[height<=360]+bestaudio[ext=m4a]/bestvideo[height<=360]+bestaudio/best[height<=360]/best';           AudioOnly = $false }
-    [PSCustomObject]@{ Label = 'Solo audio (MP3)';         Format = $null;                                                                                                          AudioOnly = $true  }
+    [PSCustomObject]@{ Label = 'Mejor calidad (H.264)';    Format = 'bestvideo[vcodec^=avc1]+bestaudio[ext=m4a]/best[vcodec^=avc1]/best[ext=mp4]/best';                                                                                            AudioOnly = $false }
+    [PSCustomObject]@{ Label = '4K (2160p)';               Format = 'bestvideo[height<=2160][vcodec^=avc1]+bestaudio[ext=m4a]/best[height<=2160][vcodec^=avc1]/best[height<=2160][ext=mp4]/best[height<=2160]';        AudioOnly = $false }
+    [PSCustomObject]@{ Label = '1440p';                    Format = 'bestvideo[height<=1440][vcodec^=avc1]+bestaudio[ext=m4a]/best[height<=1440][vcodec^=avc1]/best[height<=1440][ext=mp4]/best[height<=1440]';        AudioOnly = $false }
+    [PSCustomObject]@{ Label = '1080p (Full HD)';          Format = 'bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]/best[height<=1080][vcodec^=avc1]/best[height<=1080][ext=mp4]/best[height<=1080]';        AudioOnly = $false }
+    [PSCustomObject]@{ Label = '720p (HD)';                Format = 'bestvideo[height<=720][vcodec^=avc1]+bestaudio[ext=m4a]/best[height<=720][vcodec^=avc1]/best[height<=720][ext=mp4]/best[height<=720]';              AudioOnly = $false }
+    [PSCustomObject]@{ Label = '480p';                     Format = 'bestvideo[height<=480][vcodec^=avc1]+bestaudio[ext=m4a]/best[height<=480][vcodec^=avc1]/best[height<=480][ext=mp4]/best[height<=480]';              AudioOnly = $false }
+    [PSCustomObject]@{ Label = '360p';                     Format = 'bestvideo[height<=360][vcodec^=avc1]+bestaudio[ext=m4a]/best[height<=360][vcodec^=avc1]/best[height<=360][ext=mp4]/best[height<=360]';              AudioOnly = $false }
+    [PSCustomObject]@{ Label = 'Solo audio (MP3)';         Format = $null;                                                                                                                                              AudioOnly = $true  }
 )
 
 # -----------------------------------------------------------------------------

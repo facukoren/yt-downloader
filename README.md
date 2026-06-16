@@ -14,7 +14,8 @@ Después: doble-click en `Descargar Videos` del escritorio → pegar URL → Des
 
 ### Capacidades
 - Videos individuales y playlists de YouTube (y 1000+ sitios soportados por yt-dlp)
-- Resoluciones desde 360p hasta 4K + modo "solo audio MP3"
+- Salida **MP4 / H.264 / AAC** (máxima compatibilidad — reproduce en cualquier dispositivo)
+- Resoluciones 360p a 1080p + modo "solo audio MP3" (4K/1440p topan en 1080p: YouTube no da H.264 en resoluciones mayores)
 - Drag & drop URL desde browser
 - Auto-pega URL del clipboard al abrir
 - Progress bar + logs en vivo
@@ -68,7 +69,7 @@ BuildPortableZip.bat     # genera "YT Downloader Portable.zip"
 
 **Cancelación:** `taskkill /T /F /PID` mata yt-dlp + ffmpeg hijo.
 
-**Salida MP4:** los selectores de formato prefieren audio `m4a` (`bestvideo*+bestaudio[ext=m4a]/...`) para que el merge produzca MP4 limpio. El audio `opus` fuerza fallback a MKV (ffmpeg lo marca experimental en contenedor MP4). Sin JS runtime faltan los formatos H.264/AAC y el output siempre caería a MKV.
+**Salida MP4 / H.264 / AAC:** los selectores de formato fuerzan video `avc1` (H.264) + audio `m4a` (AAC) — `bestvideo[vcodec^=avc1]+bestaudio[ext=m4a]/...` — para máxima compatibilidad de reproducción. YouTube solo sirve H.264 hasta 1080p, así que los presets 4K/1440p topan ahí. Sin JS runtime faltan los formatos H.264/AAC y el output caería a MKV con AV1/opus.
 
 **Captura filepath final:** `--print after_move:filepath` de yt-dlp, regex `^[A-Za-z]:[\\/].+\.[A-Za-z0-9]+$` en timer tick, `Test-Path` para validar.
 
