@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    name: Parse + PSScriptAnalyzer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The app targets Windows PowerShell 5.1, so parse with that exact
+      # engine (not just pwsh 7) to catch 5.1-only syntax issues.
+      - name: Syntax check (Windows PowerShell 5.1)
+        shell: powershell
+        run: |
+          $failed = $false
+          Get-ChildItem -Recurse -Filter *.ps1 | ForEach-Object {
+            $tokens = $null; $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              $failed = $true
+              foreach ($e in $errors) {
+                Write-Host "::error file=$($_.FullName),line=$($e.Extent.StartLineNumber)::$($e.Message)"
+              }
+            } else {
+              Write-Host "OK: $($_.Name)"
+            }
+          }
+          if ($failed) { exit 1 }
+
+      # Real end-to-end check of the shared C# helper: compile it to
+      # YTD.cache.dll under PowerShell 5.1 (what Setup.ps1 does), then verify
+      # a second run reuses the cache instead of recompiling.
+      - name: Compile helper DLL (-CompileOnly, PowerShell 5.1)
+        shell: powershell
+        run: |
+          .\YTDownloader.ps1 -CompileOnly
+          if (-not (Test-Path .\YTD.cache.dll))  { Write-Host '::error::YTD.cache.dll not produced'; exit 1 }
+          if (-not (Test-Path .\YTD.cache.hash)) { Write-Host '::error::YTD.cache.hash not produced'; exit 1 }
+          $t1 = (Get-Item .\YTD.cache.dll).LastWriteTimeUtc
+          powershell -NoProfile -File .\YTDownloader.ps1 -CompileOnly
+          if ($LASTEXITCODE -ne 0) { Write-Host '::error::second -CompileOnly run failed'; exit 1 }
+          $t2 = (Get-Item .\YTD.cache.dll).LastWriteTimeUtc
+          if ($t1 -ne $t2) { Write-Host '::error::hash-valid cache was not reused on second run'; exit 1 }
+          Write-Host 'CompileOnly + cache reuse OK'
+
+      - name: PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+          $results = Invoke-ScriptAnalyzer -Path . -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
+          if ($results) {
+            $results | Format-Table RuleName, Severity, ScriptName, Line, Message -AutoSize | Out-String -Width 500 | Write-Host
+          }
+          $bad = @($results | Where-Object { $_.Severity -in @('Error', 'Warning') })
+          if ($bad.Count -gt 0) {
+            Write-Host "::error::$($bad.Count) PSScriptAnalyzer finding(s) of severity Warning or Error"
+            exit 1
+          }
+          Write-Host 'PSScriptAnalyzer: clean'

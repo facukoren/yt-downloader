@@ -29,13 +29,16 @@ Después: doble-click en `Descargar Videos` del escritorio → pegar URL → Des
 
 ### Estructura
 ```
-YTDownloader.ps1      App principal (WinForms, ~940 líneas PS5.1)
-Launch.bat            Lanzador (powershell -File ...)
-Setup.ps1 / Setup.bat First-run: genera icono, desbloquea archivos, crea shortcut
-installer.iss         Inno Setup script (per-user, sin admin)
-BuildInstaller.bat    Compila installer.iss → "Instalar YT Downloader.exe"
-BuildPortableZip.ps1  Empaqueta ZIP portable
-BuildPortableZip.bat  Wrapper del .ps1
+YTDownloader.ps1              App principal (WinForms, PS 5.1). Único dueño del C# embebido.
+Launch.bat                    Lanzador (powershell -File ...)
+Setup.ps1 / Setup.bat         First-run: genera icono, desbloquea archivos, crea shortcut,
+                              pre-compila el helper C# (YTDownloader.ps1 -CompileOnly)
+installer.iss                 Inno Setup script (per-user, sin admin)
+BuildInstaller.bat            Compila installer.iss → "Instalar YT Downloader.exe"
+BuildPortableZip.ps1          Empaqueta ZIP portable
+BuildPortableZip.bat          Wrapper del .ps1
+PSScriptAnalyzerSettings.psd1 Config de lint (reglas excluidas documentadas)
+.github/workflows/ci.yml      CI: parse PS 5.1 + compile-check + PSScriptAnalyzer
 ```
 
 ### Build desde fuente
@@ -59,11 +62,19 @@ BuildInstaller.bat       # genera "Instalar YT Downloader.exe"
 BuildPortableZip.bat     # genera "YT Downloader Portable.zip"
 ```
 
+**Lint local** (mismo chequeo que corre el CI):
+```powershell
+Install-Module PSScriptAnalyzer -Scope CurrentUser
+Invoke-ScriptAnalyzer -Path . -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
+```
+
 ### Arquitectura técnica
 
 **UI:** WinForms via PowerShell. Sin dependencias .NET externas, todo en runtime built-in.
 
 **Subprocess streaming:** Helper C# (`YTD.ProcOutput` + `YTD.Updater`) compilado a `YTD.cache.dll`. Bypass del PowerShell event subsystem (que se starva durante `Application.Run`), suscribe delegates `.NET` directos a `OutputDataReceived`/`ErrorDataReceived`/`Exited`. Líneas van a `ConcurrentQueue<string>`, drenadas por WinForms `Timer` cada 80ms — actualiza UI desde UI thread vía message pump.
+
+**Caché del helper C#:** el fuente C# vive solo en `YTDownloader.ps1`. Al arrancar se calcula su SHA-256 y se compara con `YTD.cache.hash`; si no coincide (o falta), se recompila `YTD.cache.dll` — un DLL viejo nunca puede quedar cargado silenciosamente tras actualizar el script. `Setup.ps1` pre-compila invocando `YTDownloader.ps1 -CompileOnly` (misma fuente, cero duplicación). El updater (`yt-dlp -U`) lee stdout/stderr de forma asíncrona para que su timeout siempre se cumpla aunque el proceso se cuelgue.
 
 **Quoting argv:** `ConvertTo-CmdArg` implementa algoritmo canónico `CommandLineToArgvW` (loop-based, sin regex MatchEvaluator que rompe en PS 5.1).
 
