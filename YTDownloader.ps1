@@ -555,7 +555,7 @@ $form.Controls.Add($txtLog)
 # -----------------------------------------------------------------------------
 # Logging
 # -----------------------------------------------------------------------------
-function Write-Log {
+function Write-UiLog {
     param([string]$Text)
     if ($null -eq $Text) { return }
     $txtLog.AppendText($Text + [Environment]::NewLine)
@@ -617,11 +617,11 @@ function Start-UpdateCheck {
     $script:isUpdating = $true
     $btnDownload.Enabled = $false
     $lblStatus.Text = 'Buscando actualizaciones de yt-dlp...'
-    Write-Log '[Update] Verificando version de yt-dlp...'
+    Write-UiLog '[Update] Verificando version de yt-dlp...'
     try {
         [YTD.Updater]::StartUpdate($ytdlpPath, $script:logQueue, 60000)
     } catch {
-        Write-Log "[Update] No se pudo iniciar: $($_.Exception.Message)"
+        Write-UiLog "[Update] No se pudo iniciar: $($_.Exception.Message)"
         $script:isUpdating = $false
         $btnDownload.Enabled = $true
         $lblStatus.Text = 'Listo.'
@@ -639,7 +639,7 @@ function Start-DenoInstall {
     try {
         [YTD.DenoInstaller]::Install($scriptDir, $script:logQueue)
     } catch {
-        Write-Log "[JS runtime] No se pudo iniciar la descarga de deno: $($_.Exception.Message)"
+        Write-UiLog "[JS runtime] No se pudo iniciar la descarga de deno: $($_.Exception.Message)"
         $script:isInstallingDeno = $false
     }
 }
@@ -783,8 +783,8 @@ function Start-Download {
     $txtLog.Clear()
     $progressBar.Value = 0
     $lblStatus.Text = 'Iniciando...'
-    Write-Log "> yt-dlp $argString"
-    Write-Log ''
+    Write-UiLog "> yt-dlp $argString"
+    Write-UiLog ''
 
     # Lock UI
     $script:isRunning     = $true
@@ -839,7 +839,7 @@ function Start-Download {
         $proc.BeginOutputReadLine()
         $proc.BeginErrorReadLine()
     } catch {
-        Write-Log ("Error iniciando proceso: " + $_.Exception.Message)
+        Write-UiLog ("Error iniciando proceso: " + $_.Exception.Message)
         Remove-ProcHandler
         try { $proc.Dispose() } catch {}
         $script:proc = $null
@@ -869,7 +869,7 @@ $timer.Add_Tick({
         if ($line.StartsWith($script:updateOutPrefix)) {
             $msg = $line.Substring($script:updateOutPrefix.Length + 2)
             foreach ($l in ($msg -split "`r?`n")) {
-                if (-not [string]::IsNullOrWhiteSpace($l)) { Write-Log "[Update] $l" }
+                if (-not [string]::IsNullOrWhiteSpace($l)) { Write-UiLog "[Update] $l" }
             }
             continue
         }
@@ -886,7 +886,7 @@ $timer.Add_Tick({
         if ($line.StartsWith($script:denoOutPrefix)) {
             $msg = $line.Substring($script:denoOutPrefix.Length + 2)
             foreach ($l in ($msg -split "`r?`n")) {
-                if (-not [string]::IsNullOrWhiteSpace($l)) { Write-Log "[JS runtime] $l" }
+                if (-not [string]::IsNullOrWhiteSpace($l)) { Write-UiLog "[JS runtime] $l" }
             }
             continue
         }
@@ -920,7 +920,7 @@ $timer.Add_Tick({
             } catch { }
         }
 
-        Write-Log $clean
+        Write-UiLog $clean
     }
 
     # Update flow completion
@@ -933,9 +933,9 @@ $timer.Add_Tick({
             LastUpdateCheck = $script:lastUpdateCheck
         }
         if ($updateExitCode -eq 0) {
-            Write-Log '[Update] Verificacion completada.'
+            Write-UiLog '[Update] Verificacion completada.'
         } else {
-            Write-Log "[Update] Verificacion termino con codigo $updateExitCode (continuando con version actual)."
+            Write-UiLog "[Update] Verificacion termino con codigo $updateExitCode (continuando con version actual)."
         }
         if (-not $script:isRunning) {
             $btnDownload.Enabled = $true
@@ -952,16 +952,16 @@ $timer.Add_Tick({
         if ($exitCode -eq 0) {
             $progressBar.Value = 100
             $lblStatus.Text = 'Descarga completada.'
-            Write-Log ''
-            Write-Log '=== Descarga completada con exito ==='
+            Write-UiLog ''
+            Write-UiLog '=== Descarga completada con exito ==='
             if ($null -ne $script:lastDownloadedFile) { $btnPlay.Enabled = $true }
             Show-Notification -Title 'YT Downloader' -Body 'Tu descarga termino. Click aqui para abrir la carpeta.' -Kind 'Info'
         } else {
             $friendly = Get-FriendlyError -ExitCode $exitCode -LogText $logText
             $lblStatus.Text = $friendly
-            Write-Log ''
-            Write-Log "=== Proceso finalizado con codigo $exitCode ==="
-            Write-Log "=== $friendly ==="
+            Write-UiLog ''
+            Write-UiLog "=== Proceso finalizado con codigo $exitCode ==="
+            Write-UiLog "=== $friendly ==="
             Show-Notification -Title 'YT Downloader - Problema' -Body $friendly -Kind 'Warning'
         }
         Remove-ProcHandler
@@ -1104,7 +1104,7 @@ $form.Add_Shown({
 
 # Clean shutdown
 $form.Add_FormClosing({
-    param($sender, $e)
+    param($src, $e)
     if ($script:isRunning) {
         $confirm = [System.Windows.Forms.MessageBox]::Show(
             'Hay una descarga en curso. Cancelar y salir?',
