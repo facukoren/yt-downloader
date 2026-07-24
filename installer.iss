@@ -7,7 +7,7 @@
 ; =============================================================================
 
 #define AppName        "YT Downloader"
-#define AppVersion     "1.0.0"
+#define AppVersion     "1.1.0"
 #define AppPublisher   "YT Downloader"
 #define AppExeName     "YTDownloader.ps1"
 #define ShortcutName   "Descargar Videos"
@@ -62,6 +62,9 @@ Source: "Setup.ps1";         DestDir: "{app}"; Flags: ignoreversion
 Source: "Setup.bat";         DestDir: "{app}"; Flags: ignoreversion
 Source: "app.ico";           DestDir: "{app}"; Flags: ignoreversion
 Source: "YTD.cache.dll";     DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+; Hash of the C# source the DLL was compiled from; the app recompiles the DLL
+; when this file is missing or does not match its embedded source.
+Source: "YTD.cache.hash";    DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 ; Optional JS runtime for yt-dlp (full YouTube extraction). If absent at build
 ; time the app downloads it on first launch.
 Source: "deno.exe";          DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
@@ -93,6 +96,8 @@ Filename: "powershell.exe"; \
 ; Remove user-generated files inside install dir on uninstall
 Type: files;       Name: "{app}\config.json"
 Type: files;       Name: "{app}\YTD.cache.dll"
-; deno.exe may be downloaded post-install; clean it up too.
+Type: files;       Name: "{app}\YTD.cache.hash"
+; deno.exe may be downloaded post-install; clean it up too (plus any partial).
 Type: files;       Name: "{app}\deno.exe"
+Type: files;       Name: "{app}\deno-download.zip.tmp"
 Type: dirifempty;  Name: "{app}"

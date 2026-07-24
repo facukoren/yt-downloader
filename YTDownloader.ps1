@@ -1,9 +1,14 @@
-# =============================================================================
+﻿# =============================================================================
 # YT Downloader - WinForms UI for yt-dlp
 # Portable, zero-dependency (uses local yt-dlp.exe + ffmpeg.exe)
 # =============================================================================
 
 #requires -Version 5.1
+
+# -CompileOnly: compile the C# helper to YTD.cache.dll (+ hash) and exit
+# without showing any UI. Used by Setup.ps1 to pre-compile from the single
+# authoritative copy of the source below.
+param([switch]$CompileOnly)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -12,18 +17,22 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+
 # -----------------------------------------------------------------------------
 # Native .NET event sink + Updater (avoid PowerShell event subsystem).
-# Loaded from a pre-compiled DLL if available (fast launch). Falls back to
-# in-memory compilation on first run.
+# Loaded from a pre-compiled DLL when its recorded source hash matches the
+# source below (fast launch); otherwise recompiled, so C# changes in this
+# script always take effect. Falls back to in-memory compilation.
 # -----------------------------------------------------------------------------
-$thisDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$dllCachePath = Join-Path $thisDir 'YTD.cache.dll'
+$dllCachePath = Join-Path $scriptDir 'YTD.cache.dll'
+$dllHashPath  = Join-Path $scriptDir 'YTD.cache.hash'
 
 $csTypeDef = @'
 using System;
 using System.Diagnostics;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Collections.Concurrent;
 
 namespace YTD {
@@ -45,27 +54,37 @@ namespace YTD {
         public static void StartUpdate(string ytdlpPath, ConcurrentQueue<string> queue, int timeoutMs) {
             Thread t = new Thread(delegate() {
                 int exitCode = -1;
+                Process p = null;
                 try {
                     ProcessStartInfo psi = new ProcessStartInfo(ytdlpPath, "-U");
                     psi.RedirectStandardOutput = true;
                     psi.RedirectStandardError  = true;
                     psi.UseShellExecute        = false;
                     psi.CreateNoWindow         = true;
-                    Process p = Process.Start(psi);
-                    string outStr = p.StandardOutput.ReadToEnd();
-                    string errStr = p.StandardError.ReadToEnd();
+                    p = Process.Start(psi);
+                    // Read both pipes asynchronously so WaitForExit(timeout) is
+                    // always reached. A synchronous ReadToEnd here would block
+                    // forever on a hung yt-dlp, the Done sentinel would never be
+                    // enqueued, and the UI would stay locked in "updating".
+                    Task<string> outTask = p.StandardOutput.ReadToEndAsync();
+                    Task<string> errTask = p.StandardError.ReadToEndAsync();
                     if (!p.WaitForExit(timeoutMs)) {
                         try { p.Kill(); } catch { }
                         queue.Enqueue(OutputPrefix + "::Timeout esperando yt-dlp -U");
                     } else {
                         exitCode = p.ExitCode;
-                        string combined = (outStr + errStr).Trim();
+                        string combined = "";
+                        try {
+                            if (Task.WaitAll(new Task[] { outTask, errTask }, 5000)) {
+                                combined = (outTask.Result + errTask.Result).Trim();
+                            }
+                        } catch { }
                         if (combined.Length > 0) queue.Enqueue(OutputPrefix + "::" + combined);
                     }
-                    p.Dispose();
                 } catch (Exception ex) {
                     queue.Enqueue(OutputPrefix + "::ERROR " + ex.Message);
                 } finally {
+                    if (p != null) { try { p.Dispose(); } catch { } }
                     queue.Enqueue(DonePrefix + "::" + exitCode);
                 }
             });
@@ -76,13 +95,37 @@ namespace YTD {
 }
 '@
 
-if (-not ('YTD.ProcOutput' -as [type])) {
+# SHA-256 of the C# source; stored beside the DLL so a source change (in either
+# this script or a bundled stale DLL from an older build) forces a recompile.
+$csSourceHash = ''
+try {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
     try {
-        if (Test-Path $dllCachePath) {
+        $csSourceHash = ([System.BitConverter]::ToString(
+            $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($csTypeDef))) -replace '-', '')
+    } finally { $sha.Dispose() }
+} catch { }
+
+if (-not ('YTD.ProcOutput' -as [type])) {
+    $cacheValid = $false
+    if ($csSourceHash -and (Test-Path -LiteralPath $dllCachePath) -and (Test-Path -LiteralPath $dllHashPath)) {
+        try {
+            $storedHash = (Get-Content -LiteralPath $dllHashPath -Raw -ErrorAction Stop).Trim()
+            $cacheValid = ($storedHash -eq $csSourceHash)
+        } catch { $cacheValid = $false }
+    }
+    try {
+        if ($cacheValid) {
             Add-Type -Path $dllCachePath -ErrorAction Stop
         } else {
+            if (Test-Path -LiteralPath $dllCachePath) {
+                Remove-Item -LiteralPath $dllCachePath -Force -ErrorAction Stop
+            }
             Add-Type -TypeDefinition $csTypeDef -OutputAssembly $dllCachePath -OutputType Library -ErrorAction Stop
             Add-Type -Path $dllCachePath -ErrorAction Stop
+            if ($csSourceHash) {
+                Set-Content -LiteralPath $dllHashPath -Value $csSourceHash -Encoding Ascii -ErrorAction SilentlyContinue
+            }
         }
     } catch {
         # Fallback: in-memory compile only (no cache). Slower next launch but works.
@@ -90,9 +133,13 @@ if (-not ('YTD.ProcOutput' -as [type])) {
     }
 }
 
+# Setup.ps1 invokes this script with -CompileOnly to produce the cache DLL from
+# the single copy of the C# source above. Nothing UI-related runs in that mode.
+if ($CompileOnly) { return }
+
 # Optional helper for downloading deno.exe (JS runtime required by yt-dlp for
-# full YouTube extraction). Kept as a separate Add-Type so existing YTD.cache.dll
-# installs keep working without recompilation.
+# full YouTube extraction). Kept as a separate in-memory Add-Type so the cached
+# YTD.cache.dll never needs the System.IO.Compression assembly references.
 if (-not ('YTD.DenoInstaller' -as [type])) {
     $denoCsTypeDef = @'
 using System;
@@ -171,7 +218,6 @@ namespace YTD {
 # -----------------------------------------------------------------------------
 # Paths
 # -----------------------------------------------------------------------------
-$scriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ytdlpPath  = Join-Path $scriptDir 'yt-dlp.exe'
 $ffmpegPath = Join-Path $scriptDir 'ffmpeg.exe'
 $denoPath   = Join-Path $scriptDir 'deno.exe'
@@ -184,7 +230,7 @@ if (Test-Path -LiteralPath $denoTmpZip) {
 }
 
 # Sanity check: yt-dlp must exist
-if (-not (Test-Path $ytdlpPath)) {
+if (-not (Test-Path -LiteralPath $ytdlpPath)) {
     [System.Windows.Forms.MessageBox]::Show(
         "No se encontro yt-dlp.exe en:`n$scriptDir`n`nColoca yt-dlp.exe junto a este script.",
         "Error - yt-dlp.exe faltante",
@@ -193,7 +239,7 @@ if (-not (Test-Path $ytdlpPath)) {
     return
 }
 
-$ffmpegAvailable = Test-Path $ffmpegPath
+$ffmpegAvailable = Test-Path -LiteralPath $ffmpegPath
 
 # -----------------------------------------------------------------------------
 # Resolution presets
@@ -307,10 +353,10 @@ function Test-IsValidUrl {
     } catch { return $false }
 }
 
-function Load-Config {
-    if (-not (Test-Path $configPath)) { return $null }
+function Read-Config {
+    if (-not (Test-Path -LiteralPath $configPath)) { return $null }
     try {
-        $raw = Get-Content $configPath -Raw -ErrorAction Stop
+        $raw = Get-Content -LiteralPath $configPath -Raw -ErrorAction Stop
         return $raw | ConvertFrom-Json -ErrorAction Stop
     } catch { return $null }
 }
@@ -318,7 +364,7 @@ function Load-Config {
 function Save-Config {
     param([hashtable]$Config)
     try {
-        $Config | ConvertTo-Json -Depth 4 | Set-Content -Path $configPath -Encoding UTF8 -ErrorAction Stop
+        $Config | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $configPath -Encoding UTF8 -ErrorAction Stop
     } catch {
         # Non-fatal: persistence failure should not break the app
     }
@@ -379,7 +425,7 @@ $form.Font          = New-Object System.Drawing.Font('Segoe UI', 9)
 
 # Load app icon (fallback to default if missing/corrupt)
 $iconPath = Join-Path $scriptDir 'app.ico'
-if (Test-Path $iconPath) {
+if (Test-Path -LiteralPath $iconPath) {
     try {
         $script:appIcon = New-Object System.Drawing.Icon($iconPath)
         $form.Icon = $script:appIcon
@@ -509,7 +555,7 @@ $form.Controls.Add($txtLog)
 # -----------------------------------------------------------------------------
 # Logging
 # -----------------------------------------------------------------------------
-function Write-Log {
+function Write-UiLog {
     param([string]$Text)
     if ($null -eq $Text) { return }
     $txtLog.AppendText($Text + [Environment]::NewLine)
@@ -518,7 +564,7 @@ function Write-Log {
 # -----------------------------------------------------------------------------
 # Load saved config
 # -----------------------------------------------------------------------------
-$cfg = Load-Config
+$cfg = Read-Config
 if ($cfg) {
     if ($cfg.PSObject.Properties.Name -contains 'LastDest' -and -not [string]::IsNullOrWhiteSpace($cfg.LastDest)) {
         $txtDest.Text = $cfg.LastDest
@@ -548,7 +594,8 @@ try {
     $script:notifyIcon.add_BalloonTipClicked({
         $d = $script:lastDestForOpen
         if (-not [string]::IsNullOrWhiteSpace($d) -and (Test-Path -LiteralPath $d)) {
-            try { [System.Diagnostics.Process]::Start('explorer.exe', $d) | Out-Null } catch { }
+            # Quote the path: explorer.exe splits unquoted args on spaces.
+            try { [System.Diagnostics.Process]::Start('explorer.exe', "`"$d`"") | Out-Null } catch { }
         }
     })
 } catch {
@@ -570,11 +617,11 @@ function Start-UpdateCheck {
     $script:isUpdating = $true
     $btnDownload.Enabled = $false
     $lblStatus.Text = 'Buscando actualizaciones de yt-dlp...'
-    Write-Log '[Update] Verificando version de yt-dlp...'
+    Write-UiLog '[Update] Verificando version de yt-dlp...'
     try {
         [YTD.Updater]::StartUpdate($ytdlpPath, $script:logQueue, 60000)
     } catch {
-        Write-Log "[Update] No se pudo iniciar: $($_.Exception.Message)"
+        Write-UiLog "[Update] No se pudo iniciar: $($_.Exception.Message)"
         $script:isUpdating = $false
         $btnDownload.Enabled = $true
         $lblStatus.Text = 'Listo.'
@@ -592,7 +639,7 @@ function Start-DenoInstall {
     try {
         [YTD.DenoInstaller]::Install($scriptDir, $script:logQueue)
     } catch {
-        Write-Log "[JS runtime] No se pudo iniciar la descarga de deno: $($_.Exception.Message)"
+        Write-UiLog "[JS runtime] No se pudo iniciar la descarga de deno: $($_.Exception.Message)"
         $script:isInstallingDeno = $false
     }
 }
@@ -601,7 +648,7 @@ function Start-DenoInstall {
 # Download orchestration
 # -----------------------------------------------------------------------------
 
-function Detach-ProcHandlers {
+function Remove-ProcHandler {
     if ($null -ne $script:proc) {
         try {
             if ($null -ne $script:dataDelegate) {
@@ -618,13 +665,16 @@ function Detach-ProcHandlers {
     $script:procSink     = $null
 }
 
-function Kill-Download {
-    if ($null -ne $script:proc -and -not $script:proc.HasExited) {
-        try {
+function Stop-Download {
+    $p = $script:proc
+    if ($null -eq $p) { return }
+    try {
+        # HasExited can throw if the process handle is already gone.
+        if (-not $p.HasExited) {
             # /T kills child processes (ffmpeg), /F forces termination
-            & taskkill.exe /T /F /PID $script:proc.Id 2>$null | Out-Null
-        } catch {}
-    }
+            & taskkill.exe /T /F /PID $p.Id 2>$null | Out-Null
+        }
+    } catch {}
 }
 
 function Reset-UIState {
@@ -733,8 +783,8 @@ function Start-Download {
     $txtLog.Clear()
     $progressBar.Value = 0
     $lblStatus.Text = 'Iniciando...'
-    Write-Log "> yt-dlp $argString"
-    Write-Log ''
+    Write-UiLog "> yt-dlp $argString"
+    Write-UiLog ''
 
     # Lock UI
     $script:isRunning     = $true
@@ -746,8 +796,8 @@ function Start-Download {
     $btnBrowse.Enabled    = $false
 
     # Drain any leftover queue
-    $sink = ''
-    while ($script:logQueue.TryDequeue([ref]$sink)) { }
+    $stale = ''
+    while ($script:logQueue.TryDequeue([ref]$stale)) { }
 
     # Build process
     $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -789,8 +839,8 @@ function Start-Download {
         $proc.BeginOutputReadLine()
         $proc.BeginErrorReadLine()
     } catch {
-        Write-Log ("Error iniciando proceso: " + $_.Exception.Message)
-        Detach-ProcHandlers
+        Write-UiLog ("Error iniciando proceso: " + $_.Exception.Message)
+        Remove-ProcHandler
         try { $proc.Dispose() } catch {}
         $script:proc = $null
         Reset-UIState
@@ -819,7 +869,7 @@ $timer.Add_Tick({
         if ($line.StartsWith($script:updateOutPrefix)) {
             $msg = $line.Substring($script:updateOutPrefix.Length + 2)
             foreach ($l in ($msg -split "`r?`n")) {
-                if (-not [string]::IsNullOrWhiteSpace($l)) { Write-Log "[Update] $l" }
+                if (-not [string]::IsNullOrWhiteSpace($l)) { Write-UiLog "[Update] $l" }
             }
             continue
         }
@@ -836,7 +886,7 @@ $timer.Add_Tick({
         if ($line.StartsWith($script:denoOutPrefix)) {
             $msg = $line.Substring($script:denoOutPrefix.Length + 2)
             foreach ($l in ($msg -split "`r?`n")) {
-                if (-not [string]::IsNullOrWhiteSpace($l)) { Write-Log "[JS runtime] $l" }
+                if (-not [string]::IsNullOrWhiteSpace($l)) { Write-UiLog "[JS runtime] $l" }
             }
             continue
         }
@@ -870,7 +920,7 @@ $timer.Add_Tick({
             } catch { }
         }
 
-        Write-Log $clean
+        Write-UiLog $clean
     }
 
     # Update flow completion
@@ -883,9 +933,9 @@ $timer.Add_Tick({
             LastUpdateCheck = $script:lastUpdateCheck
         }
         if ($updateExitCode -eq 0) {
-            Write-Log '[Update] Verificacion completada.'
+            Write-UiLog '[Update] Verificacion completada.'
         } else {
-            Write-Log "[Update] Verificacion termino con codigo $updateExitCode (continuando con version actual)."
+            Write-UiLog "[Update] Verificacion termino con codigo $updateExitCode (continuando con version actual)."
         }
         if (-not $script:isRunning) {
             $btnDownload.Enabled = $true
@@ -902,19 +952,19 @@ $timer.Add_Tick({
         if ($exitCode -eq 0) {
             $progressBar.Value = 100
             $lblStatus.Text = 'Descarga completada.'
-            Write-Log ''
-            Write-Log '=== Descarga completada con exito ==='
+            Write-UiLog ''
+            Write-UiLog '=== Descarga completada con exito ==='
             if ($null -ne $script:lastDownloadedFile) { $btnPlay.Enabled = $true }
             Show-Notification -Title 'YT Downloader' -Body 'Tu descarga termino. Click aqui para abrir la carpeta.' -Kind 'Info'
         } else {
             $friendly = Get-FriendlyError -ExitCode $exitCode -LogText $logText
             $lblStatus.Text = $friendly
-            Write-Log ''
-            Write-Log "=== Proceso finalizado con codigo $exitCode ==="
-            Write-Log "=== $friendly ==="
+            Write-UiLog ''
+            Write-UiLog "=== Proceso finalizado con codigo $exitCode ==="
+            Write-UiLog "=== $friendly ==="
             Show-Notification -Title 'YT Downloader - Problema' -Body $friendly -Kind 'Warning'
         }
-        Detach-ProcHandlers
+        Remove-ProcHandler
         if ($null -ne $script:proc) {
             try { $script:proc.Dispose() } catch {}
             $script:proc = $null
@@ -964,7 +1014,7 @@ $btnDownload.Add_Click({ Start-Download })
 $btnCancel.Add_Click({
     if ($script:isRunning) {
         $lblStatus.Text = 'Cancelando...'
-        Kill-Download
+        Stop-Download
     }
 })
 
@@ -1054,7 +1104,7 @@ $form.Add_Shown({
 
 # Clean shutdown
 $form.Add_FormClosing({
-    param($sender, $e)
+    param($src, $e)
     if ($script:isRunning) {
         $confirm = [System.Windows.Forms.MessageBox]::Show(
             'Hay una descarga en curso. Cancelar y salir?',
@@ -1065,10 +1115,10 @@ $form.Add_FormClosing({
             $e.Cancel = $true
             return
         }
-        Kill-Download
+        Stop-Download
     }
     try { $timer.Stop() } catch {}
-    Detach-ProcHandlers
+    Remove-ProcHandler
     if ($null -ne $script:proc) {
         try { $script:proc.Dispose() } catch {}
         $script:proc = $null

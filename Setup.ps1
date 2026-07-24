@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # YT Downloader - First-run setup
 #
 # Idempotent. Run as standard user (no admin needed). Effects:
@@ -22,6 +22,7 @@ Add-Type -AssemblyName System.Drawing
 $scriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $iconPath    = Join-Path $scriptDir 'app.ico'
 $dllPath     = Join-Path $scriptDir 'YTD.cache.dll'
+$dllHashPath = Join-Path $scriptDir 'YTD.cache.hash'
 $launchPath  = Join-Path $scriptDir 'YTDownloader.ps1'
 $desktop     = [Environment]::GetFolderPath('Desktop')
 $lnkPath     = Join-Path $desktop 'Descargar Videos.lnk'
@@ -105,75 +106,19 @@ try {
 }
 
 # -----------------------------------------------------------------------------
-# 3. Pre-compile the C# helper into YTD.cache.dll for fast launch
+# 3. Pre-compile the C# helper into YTD.cache.dll for fast launch.
+#    The C# source lives ONLY in YTDownloader.ps1; -CompileOnly compiles it to
+#    YTD.cache.dll (+ YTD.cache.hash) and returns without showing the UI, so
+#    the pre-compiled DLL always matches what the app expects.
 # -----------------------------------------------------------------------------
-$csCode = @'
-using System;
-using System.Diagnostics;
-using System.Threading;
-using System.Collections.Concurrent;
-
-namespace YTD {
-    // Receives async output from a Process and pushes lines to a thread-safe queue.
-    public class ProcOutput {
-        public const string ExitSentinel = "__YTD_EXIT__";
-        public ConcurrentQueue<string> Queue;
-        public ProcOutput(ConcurrentQueue<string> q) { Queue = q; }
-        public void OnData(object sender, DataReceivedEventArgs e) {
-            if (e != null && e.Data != null) Queue.Enqueue(e.Data);
-        }
-        public void OnExit(object sender, EventArgs e) {
-            try { Process p = sender as Process; if (p != null) p.WaitForExit(); } catch { }
-            Queue.Enqueue(ExitSentinel);
-        }
-    }
-
-    // Runs `yt-dlp.exe -U` on a background .NET thread (no PS engine involvement)
-    // and reports result lines through the same queue.
-    public static class Updater {
-        public const string OutputPrefix = "__YTD_UPDATE_OUT__";
-        public const string DonePrefix   = "__YTD_UPDATE_DONE__";
-        public static void StartUpdate(string ytdlpPath, ConcurrentQueue<string> queue, int timeoutMs) {
-            Thread t = new Thread(delegate() {
-                int exitCode = -1;
-                try {
-                    ProcessStartInfo psi = new ProcessStartInfo(ytdlpPath, "-U");
-                    psi.RedirectStandardOutput = true;
-                    psi.RedirectStandardError  = true;
-                    psi.UseShellExecute        = false;
-                    psi.CreateNoWindow         = true;
-                    Process p = Process.Start(psi);
-                    string outStr = p.StandardOutput.ReadToEnd();
-                    string errStr = p.StandardError.ReadToEnd();
-                    if (!p.WaitForExit(timeoutMs)) {
-                        try { p.Kill(); } catch { }
-                        queue.Enqueue(OutputPrefix + "::Timeout esperando yt-dlp -U");
-                    } else {
-                        exitCode = p.ExitCode;
-                        string combined = (outStr + errStr).Trim();
-                        if (combined.Length > 0) queue.Enqueue(OutputPrefix + "::" + combined);
-                    }
-                    p.Dispose();
-                } catch (Exception ex) {
-                    queue.Enqueue(OutputPrefix + "::ERROR " + ex.Message);
-                } finally {
-                    queue.Enqueue(DonePrefix + "::" + exitCode);
-                }
-            });
-            t.IsBackground = true;
-            t.Start();
-        }
-    }
-}
-'@
-
 try {
-    if (Test-Path $dllPath) { Remove-Item $dllPath -Force -ErrorAction SilentlyContinue }
-    Add-Type -TypeDefinition $csCode -OutputAssembly $dllPath -OutputType Library
-    if (Test-Path $dllPath) {
+    if (Test-Path -LiteralPath $dllPath) { Remove-Item -LiteralPath $dllPath -Force -ErrorAction SilentlyContinue }
+    if (Test-Path -LiteralPath $dllHashPath) { Remove-Item -LiteralPath $dllHashPath -Force -ErrorAction SilentlyContinue }
+    & $launchPath -CompileOnly
+    if (Test-Path -LiteralPath $dllPath) {
         Step "OK  Helper C# compilado: YTD.cache.dll"
     } else {
-        Step "WRN DLL no aparece tras Add-Type"
+        Step "WRN DLL no aparece tras compilar"
     }
 } catch {
     Step "WRN Compilacion DLL fallo (la app re-compilara en runtime): $($_.Exception.Message)"
@@ -189,7 +134,7 @@ try {
     $lnk.TargetPath       = (Get-Command powershell.exe).Source
     $lnk.Arguments        = "-NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File `"$launchPath`""
     $lnk.WorkingDirectory = $scriptDir
-    if (Test-Path $iconPath) { $lnk.IconLocation = "$iconPath,0" }
+    if (Test-Path -LiteralPath $iconPath) { $lnk.IconLocation = "$iconPath,0" }
     $lnk.Description      = 'YT Downloader - Descargar videos de YouTube'
     $lnk.WindowStyle      = 7   # minimized in case PS shows briefly
     $lnk.Save()

@@ -1,4 +1,4 @@
-# BuildPortableZip.ps1 — Empaqueta la app en "YT Downloader Portable.zip"
+﻿# BuildPortableZip.ps1 — Empaqueta la app en "YT Downloader Portable.zip"
 # No requiere herramientas externas (usa Compress-Archive nativo).
 # El destinatario extrae el ZIP y ejecuta Setup.bat una vez.
 
@@ -18,18 +18,16 @@ $files = @()
 $missing = @()
 foreach ($f in $requiredFiles) {
     $path = Join-Path $d $f
-    if (Test-Path $path) { $files += $path }
+    if (Test-Path -LiteralPath $path) { $files += $path }
     else { $missing += $f }
 }
 
-# Incluir DLL cache si existe (opcional)
-$dll = Join-Path $d 'YTD.cache.dll'
-if (Test-Path $dll) { $files += $dll }
-
-# Incluir runtime JS si esta presente (opcional, evita el warning de yt-dlp).
-# Si falta, la app lo descarga sola al primer arranque.
-$deno = Join-Path $d 'deno.exe'
-if (Test-Path $deno) { $files += $deno }
+# Archivos opcionales: DLL cache + su hash, y el runtime JS (deno). Si el
+# runtime falta, la app lo descarga sola al primer arranque.
+foreach ($opt in @('YTD.cache.dll', 'YTD.cache.hash', 'deno.exe')) {
+    $path = Join-Path $d $opt
+    if (Test-Path -LiteralPath $path) { $files += $path }
+}
 
 if ($missing.Count -gt 0) {
     Write-Host "[ERROR] Faltan archivos:" -ForegroundColor Red
@@ -41,10 +39,10 @@ if ($missing.Count -gt 0) {
 }
 
 $out = Join-Path $d 'YT Downloader Portable.zip'
-if (Test-Path $out) { Remove-Item $out -Force }
+if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Force }
 
 try {
-    Compress-Archive -Path $files -DestinationPath $out -CompressionLevel Optimal -ErrorAction Stop
+    Compress-Archive -LiteralPath $files -DestinationPath $out -CompressionLevel Optimal -ErrorAction Stop
     $sz = (Get-Item $out).Length
     Write-Host "[OK] Generado: $out" -ForegroundColor Green
     Write-Host ("Tamano: {0:N1} MB" -f ($sz / 1MB))
